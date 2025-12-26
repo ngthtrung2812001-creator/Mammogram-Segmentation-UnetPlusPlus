@@ -1,0 +1,9 @@
+torch
+torchvision
+segmentation-models-pytorch
+albumentations
+pandas
+matplotlib
+opencv-python
+imutils
+tqdm
