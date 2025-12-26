@@ -2,7 +2,7 @@
 # HƯỚNG DẪN CHẠY LỆNH (COMMAND LINE CHEATSHEET)
 # Lưu ý: Thay thế đường dẫn "--data" bằng đường dẫn thực tế trên máy bạn.
 # ==============================================================================
-DATA_PATH= "/mnt/d/cbis_ddsm_512_lanczos"
+DATA_PATH="/mnt/d/cbis_ddsm_512_lanczos"
 # ------------------------------------------------------------------------------
 # 1. HUẤN LUYỆN MỚI (TRAIN FROM SCRATCH)
 # ------------------------------------------------------------------------------
