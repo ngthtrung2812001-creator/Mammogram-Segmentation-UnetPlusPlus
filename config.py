@@ -18,3 +18,5 @@ NUM_EPOCHS = 50
 # Optimizer params
 BETA = (0.9, 0.999)
 AMSGRAD = False
+
+BASE_OUTPUT = "output"

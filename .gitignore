@@ -1,0 +1,46 @@
+# --- PYTHON & HỆ THỐNG ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.vscode/
+.idea/
+.DS_Store
+
+# --- MODEL WEIGHTS (QUAN TRỌNG: CHẶN FILE NẶNG) ---
+# Chặn tất cả các định dạng model phổ biến
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.h5
+*.onnx
+# Chặn cụ thể các file model bạn đang có ở thư mục gốc
+best_dice_mass_model.pth
+best_iou_mass_model.pth
+last_model.pth
+
+# --- DỮ LIỆU & KẾT QUẢ ---
+# Bỏ qua thư mục chứa ảnh dataset
+dataset/
+train/
+test/
+val/
+data/
+
+# Bỏ qua các file ảnh/nén nếu lỡ để bên ngoài
+*.png
+*.jpg
+*.jpeg
+*.zip
+*.rar
+*.tar
+*.tar.gz
+
+# Bỏ qua thư mục output kết quả train
+output/
+logs/
+runs/
+wandb/

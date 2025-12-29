@@ -65,7 +65,7 @@ def main(args):
     print(f"\n{'='*60}")
     print(f"🚀 RUNNING MODE: {args.mode.upper()}")
     print(f"📂 Dataset:  {args.data}")
-    print(f"🧠 Model:    Unet++ (EfficientNet-B4)")
+    print(f"🧠 Model:    Unet++ (EfficientNet-B2)")
     print(f"📉 Loss:     {args.loss}")
     print(f"⚙️  Img Size: {args.img_size} | Batch: {args.batchsize} | LR: {args.lr0}")
     print(f"{'='*60}\n")
@@ -73,11 +73,11 @@ def main(args):
     set_seed()
     
     # ====================================================
-    # 1. KHỞI TẠO MODEL (Unet++ & EfficientNet-B4)
+    # 1. KHỞI TẠO MODEL (Unet++ & EfficientNet-B2)
     # ====================================================
-    print(f"[INFO] Initializing Model Unet++ with EfficientNet-B4...")
+    print(f"[INFO] Initializing Model Unet++ with EfficientNet-B2...")
     model = smp.UnetPlusPlus(
-        encoder_name="efficientnet-b4", # Đã đổi theo yêu cầu của bạn
+        encoder_name="efficientnet-b2", # Đã đổi theo yêu cầu của bạn
         encoder_weights="imagenet",     
         in_channels=3,                  # Giả sử bạn copy kênh xám thành 3 kênh RGB
         classes=args.numclass,          # Thường là 1 cho Binary Segmentation

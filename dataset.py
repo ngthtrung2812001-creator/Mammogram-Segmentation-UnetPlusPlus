@@ -8,7 +8,7 @@ from imutils import paths
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-# Chỉ import hằng số cấu hình hệ thống, không import logic
+# Chỉ import hằng số cấu hình hệ thống
 from config import SEED, PIN_MEMORY
 
 # ====================================================
@@ -24,29 +24,22 @@ class SegmentationDataset(Dataset):
         return len(self.imagePaths)
 
     def __getitem__(self, idx):
-        # 1. Lấy đường dẫn
         imagePath = self.imagePaths[idx]
         maskPath = self.maskPaths[idx]
 
-        # 2. Đọc ảnh và mask
         image = cv2.imread(imagePath)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Đọc mask ở chế độ Grayscale
+        # Đọc mask
         mask = cv2.imread(maskPath, cv2.IMREAD_GRAYSCALE) 
 
-        # 3. Áp dụng Albumentations (Augmentation)
         if self.transforms:
             augmented = self.transforms(image=image, mask=mask)
             image = augmented["image"]
             mask = augmented["mask"]
             
-            # 4. Xử lý Mask sau khi augment
-            # Mask cần chuyển về 0.0 và 1.0 (float32)
-            # Resize của Albumentations đôi khi trả về giá trị nội suy, nên cần threshold lại cho chắc chắn
+            # Threshold lại cho chắc chắn sau khi resize
             mask = (mask > 127).float()
-            
-            # Thêm chiều kênh (Channel) cho mask: [H, W] -> [1, H, W]
             mask = mask.unsqueeze(0) 
 
         return image, mask, imagePath
@@ -55,76 +48,77 @@ class SegmentationDataset(Dataset):
 # 2. HÀM HỖ TRỢ REPRODUCIBILITY
 # ====================================================
 def seed_worker(worker_id):
-    """Đảm bảo tính ngẫu nhiên giống nhau mỗi lần chạy trên nhiều workers"""
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
 # ====================================================
-# 3. HÀM TẠO DATALOADERS (TRUNG TÂM)
+# 3. HÀM TẠO DATALOADERS
 # ====================================================
 def get_dataloaders(data_dir, batch_size, img_size, augment=False):
-    """
-    Hàm tạo Dataloader nhận tham số trực tiếp, không phụ thuộc Config cứng.
-    """
-    # img_size là list [H, W]
     height, width = img_size[0], img_size[1]
     
     # --- A. ĐỊNH NGHĨA TRANSFORMS ---
-    # Transform cơ bản (luôn dùng cho Valid/Test)
+    # Valid/Test Transform (Chỉ resize và chuẩn hóa)
     base_transform = [
-        A.Resize(
-            height=height, 
-            width=width, 
-            interpolation=cv2.INTER_LINEAR,
-            mask_interpolation=cv2.INTER_NEAREST
-        ),
+        A.Resize(height=height, width=width, interpolation=cv2.INTER_LINEAR),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ]
     
     if augment:
-        print("[INFO] Using Data Augmentation for Training")
-        # Augmentation chỉ áp dụng cho Train
+        print(f"[INFO] Using HEAVY Data Augmentation for Training (Run 3 Strategy)")
+        # --- CẤU HÌNH AUGMENTATION MẠNH MẼ ---
+        # --- CẤU HÌNH AUGMENTATION CHUẨN Y TẾ (SAFE & CLEAN) ---
         train_ops = [
             A.Resize(height=height, width=width),
+
+            # 1. Hình học (An toàn tuyệt đối)
+            # Xoay lật thoải mái vì khối u có thể quay mọi hướng
             A.HorizontalFlip(p=0.5),
-            A.Rotate(limit=10, border_mode=cv2.BORDER_REFLECT_101, p=0.2),
-            A.RandomBrightnessContrast(brightness_limit=0.05, contrast_limit=0.05, p=0.2),
-            A.ShiftScaleRotate(shift_limit=0.02, scale_limit=0.05, rotate_limit=0, border_mode=cv2.BORDER_REFLECT_101, p=0.2),
-            # Normalize và ToTensor luôn ở cuối
+            A.VerticalFlip(p=0.5),
+            # Xoay nhẹ và phóng to nhẹ để giả lập việc bệnh nhân đứng sai tư thế
+            A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=20, p=0.5),
+
+            # 2. Màu sắc & Ánh sáng (Nhẹ nhàng)
+            # Giúp model chống lại sự khác biệt về độ phơi sáng giữa các máy chụp
+            A.OneOf([
+                A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=1),
+                A.RandomGamma(gamma_limit=(80, 120), p=1),
+            ], p=0.3),
+
+            # 3. Làm nhiễu nhẹ (Tăng độ bền vững)
+            A.OneOf([
+                A.GaussNoise(var_limit=(10.0, 50.0), p=1),
+                A.GaussianBlur(blur_limit=3, p=1),
+            ], p=0.2),
+
+            # Chuẩn hóa (Bắt buộc)
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ]
         train_transform = A.Compose(train_ops)
     else:
-        print("[INFO] No Augmentation")
+        print("[INFO] No Augmentation (Validation/Test Mode)")
         train_transform = A.Compose(base_transform)
 
     valid_transform = A.Compose(base_transform)
 
     # --- B. TẠO ĐƯỜNG DẪN DỮ LIỆU ---
-    # Giả sử cấu trúc thư mục chuẩn: data_dir/train/images, data_dir/train/masks,...
     train_img_dir = os.path.join(data_dir, "train", "images")
     train_msk_dir = os.path.join(data_dir, "train", "masks")
-    
     valid_img_dir = os.path.join(data_dir, "valid", "images")
     valid_msk_dir = os.path.join(data_dir, "valid", "masks")
-    
     test_img_dir = os.path.join(data_dir, "test", "images")
     test_msk_dir = os.path.join(data_dir, "test", "masks")
 
-    # Lấy danh sách file (đã sort để đảm bảo khớp cặp ảnh-mask)
     trainImagesPaths = sorted(list(paths.list_images(train_img_dir)))
     trainMasksPaths  = sorted(list(paths.list_images(train_msk_dir)))
-
     validImagesPaths = sorted(list(paths.list_images(valid_img_dir)))
     validMasksPaths  = sorted(list(paths.list_images(valid_msk_dir)))
-
     testImagesPaths  = sorted(list(paths.list_images(test_img_dir)))
     testMasksPaths   = sorted(list(paths.list_images(test_msk_dir)))
 
-    # Kiểm tra sơ bộ
     if len(trainImagesPaths) == 0:
         print(f"⚠️ CẢNH BÁO: Không tìm thấy ảnh train nào tại {train_img_dir}")
     
@@ -138,38 +132,11 @@ def get_dataloaders(data_dir, batch_size, img_size, augment=False):
     print(f"[INFO] Found {len(testDS)} test images")
 
     # --- D. KHỞI TẠO DATALOADER ---
-    # Generator để kiểm soát tính ngẫu nhiên của shuffle
     g = torch.Generator()
     g.manual_seed(SEED)
 
-    trainLoader = DataLoader(
-        trainDS, 
-        shuffle=True,
-        batch_size=batch_size, 
-        pin_memory=PIN_MEMORY,
-        num_workers=4, 
-        worker_init_fn=seed_worker, 
-        generator=g
-    )
-    
-    validLoader = DataLoader(
-        validDS, 
-        shuffle=False,
-        batch_size=batch_size, 
-        pin_memory=PIN_MEMORY,
-        num_workers=4, 
-        worker_init_fn=seed_worker, 
-        generator=g
-    )
-    
-    testLoader = DataLoader(
-        testDS, 
-        shuffle=False,
-        batch_size=batch_size, 
-        pin_memory=PIN_MEMORY,
-        num_workers=4, 
-        worker_init_fn=seed_worker, 
-        generator=g
-    )
+    trainLoader = DataLoader(trainDS, shuffle=True, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
+    validLoader = DataLoader(validDS, shuffle=False, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
+    testLoader = DataLoader(testDS, shuffle=False, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
     
     return trainLoader, validLoader, testLoader

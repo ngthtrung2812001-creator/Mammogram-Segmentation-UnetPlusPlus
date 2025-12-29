@@ -69,7 +69,15 @@ def export(trainer, save_dir=None):
         data[k] = values[:len(data['epoch'])]
 
     # Lưu CSV
-    df = pd.DataFrame(data)
+    # --- SỬA LỖI: CẮT CÁC LIST CHO BẰNG NHAU ---
+    # Tìm độ dài nhỏ nhất trong tất cả các cột dữ liệu
+    min_len = min(len(v) for v in data.values())
+
+    # Cắt bớt các cột dài hơn để bằng với cột ngắn nhất
+    data_fixed = {k: v[:min_len] for k, v in data.items()}
+
+    # Tạo DataFrame từ dữ liệu đã sửa
+    df = pd.DataFrame(data_fixed)
     csv_path = os.path.join(base_folder, 'training_history.csv')
     df.to_csv(csv_path, index=False)
     print(f"[INFO] History saved to {csv_path}")
