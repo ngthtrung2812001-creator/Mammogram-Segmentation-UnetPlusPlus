@@ -1,52 +1,39 @@
-# CHANGELOG - Mammogram Segmentation Project
+# CHANGELOG - Project Mammogram Segmentation (Grand Master Edition)
 
-Tài liệu này ghi lại tất cả những thay đổi quan trọng, sửa lỗi và cải tiến được thực hiện đối với source code gốc.
+## 📦 Version 3.0.0 (Grand Master) - Current Stable
+**Ngày phát hành:** 2024-05-20
+**Mục tiêu:** Tối ưu hóa toàn diện cho bài toán phân đoạn khối u vú (Mass Segmentation) trên dữ liệu DDSM nhiễu.
 
-## [2025-12-27] - Refactoring & Optimization for Linux Server
+### 🚀 Tính năng mới (New Features)
+* **Multi-View Input (3 Channels):**
+    * Thay thế input ảnh xám đơn thuần bằng chồng ảnh 3 lớp (Stacking):
+        1.  **Red Channel:** Ảnh gốc xử lý CLAHE (Contrast Limited Adaptive Histogram Equalization).
+        2.  **Green Channel:** Gamma Low (γ=0.5) - Làm sáng vùng tối để lộ diện chân rết/tua gai (Spiculations).
+        3.  **Blue Channel:** Gamma High (γ=1.5) - Làm tối nền để nổi bật lõi khối u đậm đặc.
+* **Dynamic Patch Generation Strategy:**
+    * **U Thường (≤512px):** Cắt ngẫu nhiên có độ lệch (Random Shift) để mô phỏng cửa sổ trượt.
+    * **U Khổng lồ (>512px):** Chiến thuật "Zoom-out" (1.5x context) + Resize Lanczos4 để giữ trọn vẹn hình thái học.
+* **Model Architecture Upgrade:**
+    * Nâng cấp Backbone từ `EfficientNet-B4` lên **`EfficientNet-B5`** (Pre-trained ImageNet).
+    * Sử dụng **U-Net++ (Nested U-Net)** với Attention Decoder (`scse`).
+* **Advanced Augmentation (Online):**
+    * Tích hợp `Albumentations` với **Elastic Transform** & **Grid Distortion** để mô phỏng tính chất đàn hồi của mô mềm.
 
-### 🚨 Critical Fixes (Sửa lỗi nghiêm trọng)
-* **Fix Circular Import:** Đã loại bỏ hoàn toàn lỗi "nhập vòng tròn" giữa `config.py` <-> `train.py` <-> `dataset.py`.
-    * *Giải pháp:* Chuyển đổi kiến trúc từ phụ thuộc biến toàn cục (Global Config) sang Dependency Injection (Truyền tham số từ `main` xuống các hàm con).
-* **Fix Linux Display Error:** Sửa lỗi crash khi sử dụng `matplotlib.pyplot` trên server Linux không có màn hình (Headless).
-    * *Giải pháp:* Thêm backend `matplotlib.use('Agg')` vào đầu các file `utils.py` và `result.py`.
-* **Fix Optimizer Logic:** Sửa lỗi `optimizer.py` không nhận tham số Learning Rate (`--lr0`) từ bàn phím mà luôn lấy giá trị mặc định.
-
-### 🏗️ Architectural Changes (Thay đổi kiến trúc)
-* **train.py (Main Controller):**
-    * Đóng vai trò trung tâm điều phối.
-    * Nhận toàn bộ Arguments (`--loss`, `--lr0`, `--data`,...) và phân phối xuống `trainer`, `dataset`, `optimizer`.
-* **config.py:**
-    * Loại bỏ logic xử lý `args`.
-    * Chỉ còn giữ lại các hằng số tĩnh (`SEED`, `DEVICE`, `PIN_MEMORY`).
-* **utils.py:**
-    * Gộp chung các file metrics và loss rời rạc thành một module thống nhất.
-    * Thêm `Factory Pattern` cho Loss Function (`get_loss_function`).
-
-### 🚀 Model & Training Enhancements (Cải tiến mô hình)
-* **Model Architecture:**
-    * Nâng cấp từ `Unet` (EfficientNet-B3) lên **`UnetPlusPlus`** kết hợp Encoder **`EfficientNet-B4`** để tăng khả năng trích xuất đặc trưng.
-* **Loss Functions:**
-    * Tích hợp thêm **`TverskyLoss`** và **`FocalTverskyLoss`** chuyên trị dữ liệu mất cân bằng (tỷ lệ U < 1%).
-    * Cập nhật `ComboLoss` với tham số `alpha=0.8` để ưu tiên học vùng khối u.
-* **Validation Metrics:**
-    * Thêm tính toán `Dice` và `IoU` tách biệt cho 2 trường hợp: Ảnh có bệnh (Mass) và Ảnh bình thường (Normal) để đánh giá trung thực hơn.
-
-### 🛠️ Code Cleanup & Refactoring (Dọn dẹp code)
-* **dataset.py:**
-    * Hàm `get_dataloaders` giờ đây nhận trực tiếp `data_dir` và `img_size`.
-    * Xóa bỏ các hardcoded paths cũ.
-* **trainer.py:**
-    * Loại bỏ `from config import *`.
-    * Thêm cơ chế `try-except-finally` khi lưu ảnh visualize để đảm bảo đóng `plt.figure` và giải phóng RAM.
-* **result.py:**
-    * Sửa lỗi chính tả tên biến `csv_path_currrent` -> `csv_path`.
-    * Thêm kiểm tra `os.path.exists` trước khi di chuyển file model để tránh lỗi crash khi file không tồn tại.
-
-### 📉 Visualization
-* Cập nhật hàm `visualize_prediction`:
-    * Vẽ ảnh chồng lớp (Overlay) với độ trong suốt (Alpha blending) giúp dễ quan sát vị trí dự đoán so với nhãn gốc.
-    * Tự động lưu ảnh ra đĩa thay vì cố gắng hiển thị (`plt.show()`) gây lỗi trên Server.
+### 🛠️ Sửa lỗi & Cải tiến (Bug Fixes & Improvements)
+* **FIXED:** Loại bỏ hoàn toàn phương pháp SAM (Segment Anything Model) do hiện tượng "Over-smoothing" (mất gai) và "Hallucination" (bắt nhầm nhiễu CLAHE).
+* **FIXED:** Loại bỏ phương pháp Canny/Sobel Edge do quá nhạy với nhiễu hạt của ảnh X-quang.
+* **IMPROVED:** Sử dụng **Focal Tversky Loss** để giải quyết triệt để vấn đề mất cân bằng dữ liệu (Class Imbalance).
 
 ---
-**Tác giả:** Gemini AI Assistant & User
-**Môi trường khuyến nghị:** Linux Server (Ubuntu), Python 3.8+, PyTorch CUDA.
+
+## 📦 Version 2.0.0 (Experimental) - Deprecated
+**Trạng thái:** Đã hủy bỏ (Failed experiments)
+* Thử nghiệm tích hợp SAM (`vit_h`) để tạo Mask gợi ý. -> **Thất bại** (Mask bị vo tròn, mất chi tiết gai).
+* Thử nghiệm kênh cạnh (Edge Channels) dùng Sobel. -> **Thất bại** (Nhiễu quá nhiều do CLAHE).
+
+## 📦 Version 1.0.0 (Legacy)
+**Trạng thái:** Dự án gốc
+* Input: Ảnh xám 1 kênh (Grayscale).
+* Model: U-Net cơ bản hoặc U-Net++ (Backbone nhỏ).
+* Loss: Dice Loss cơ bản.
+* Nhược điểm: Hay bị dương tính giả (False Positive) ở vùng mô đặc và bỏ sót các khối u lớn.

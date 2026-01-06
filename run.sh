@@ -2,7 +2,7 @@
 # HƯỚNG DẪN CHẠY LỆNH (COMMAND LINE CHEATSHEET)
 # Lưu ý: Thay thế đường dẫn "--data" bằng đường dẫn thực tế trên máy bạn.
 # ==============================================================================
-DATA_PATH="/mnt/d/cbis_ddsm_512_lanczos"
+DATA_PATH="/mnt/d/CBIS_DDSM_merge_512"
 # ------------------------------------------------------------------------------
 # 1. HUẤN LUYỆN MỚI (TRAIN FROM SCRATCH)
 # ------------------------------------------------------------------------------
@@ -11,11 +11,10 @@ DATA_PATH="/mnt/d/cbis_ddsm_512_lanczos"
 #python train.py --mode train --data "D:/ISIC_dataset/format_dataset" --saveas "Run1_Basic" --epoch 50 --batchsize 8 --img_size 512 512
 
 # > Cấu hình nâng cao (Bật Augmentation, giảm LR, dùng Focal Tversky cho data khó)
-python train.py --mode train --data "$DATA_PATH" --saveas "Run2_Advanced_3" --epoch 100 --batchsize 8 --lr0 1e-3 --augment --loss FocalTversky_loss --optimizer AdamW
+python train.py --mode train --data "$DATA_PATH" --saveas "Run2_Advanced_4" --epoch 100 --batchsize 8 --lr0 1e-3 --augment --loss FocalTversky_loss --optimizer AdamW
 
 # > Thử nghiệm với Combo Loss (Kết hợp Dice + Focal)
 #python train.py --mode train --data "D:/ISIC_dataset/format_dataset" --saveas "Run3_Combo" --loss Combo_loss --weight_decay 1e-4
-
 
 # ------------------------------------------------------------------------------
 # 2. HUẤN LUYỆN TIẾP (PRETRAIN / RESUME)
@@ -34,7 +33,7 @@ python train.py --mode train --data "$DATA_PATH" --saveas "Run2_Advanced_3" --ep
 # ------------------------------------------------------------------------------
 
 # > Đánh giá model tốt nhất của Run2
-python train.py --mode evaluate --data "$DATA_PATH" --checkpoint "output/Run2_Advanced_3/best_dice_mass_model.pth" --saveas "Eval_Run2" --batchsize 16
+python train.py --mode evaluate --data "$DATA_PATH" --checkpoint "output/Run2_Advanced_4/best_dice_mass_model.pth" --saveas "Eval_Run2_2" --batchsize 16
 
 # ------------------------------------------------------------------------------
 # GIẢI THÍCH THAM SỐ QUAN TRỌNG:

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import cv2
 
 # --- FIX LỖI PLT TRÊN LINUX SERVER ---
 import matplotlib
@@ -256,3 +257,76 @@ def get_loss_function(loss_name):
     else:
         print(f"[WARN] Loss '{loss_name}' not found! Defaulting to Combo_loss.")
         return ComboLoss(alpha=0.8)
+    
+# ====================================================
+# 5. SLIDING WINDOW INFERENCE UTILS (NEW)
+# ====================================================
+
+def adjust_gamma(image, gamma=1.0):
+    """Hàm chỉnh Gamma nhanh bằng Lookup Table"""
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+    return cv2.LUT(image, table)
+
+def predict_sliding_window(model, full_image_gray, device, window_size=512, stride=256):
+    """
+    Dự đoán trên ảnh gốc siêu lớn bằng cách trượt cửa sổ.
+    Input: Ảnh xám gốc (H, W)
+    Output: Mask dự đoán (H, W) (Giá trị 0-1)
+    """
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+    
+    # 1. Chuẩn bị 3 kênh (Multi-View) ngay tại chỗ (On-the-fly)
+    # Vì ảnh gốc rất nặng, ta không lưu sẵn 3 kênh ra đĩa mà tạo lúc chạy
+    img_low = adjust_gamma(full_image_gray, gamma=0.5)
+    img_high = adjust_gamma(full_image_gray, gamma=1.5)
+    full_image_3c = np.stack([full_image_gray, img_low, img_high], axis=-1)
+    
+    h_orig, w_orig = full_image_3c.shape[:2]
+    
+    # 2. Padding để ảnh chia hết cho window_size
+    pad_h = (window_size - h_orig % window_size) % window_size
+    pad_w = (window_size - w_orig % window_size) % window_size
+    
+    image_padded = cv2.copyMakeBorder(full_image_3c, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
+    h_pad, w_pad = image_padded.shape[:2]
+    
+    # Map chứa tổng xác suất và map đếm số lần dự đoán
+    prob_map = np.zeros((h_pad, w_pad), dtype=np.float32)
+    count_map = np.zeros((h_pad, w_pad), dtype=np.float32)
+    
+    # Transform chuẩn hóa (giống lúc train)
+    transform = A.Compose([
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+    ])
+    
+    model.eval()
+    
+    # 3. Vòng lặp trượt
+    # stride=256 nghĩa là overlap 50% -> Giúp biên dự đoán cực mượt
+    with torch.no_grad():
+        for y in range(0, h_pad - window_size + 1, stride):
+            for x in range(0, w_pad - window_size + 1, stride):
+                # Cắt patch
+                patch = image_padded[y:y+window_size, x:x+window_size, :]
+                
+                # Preprocess
+                tensor = transform(image=patch)['image'].unsqueeze(0).to(device)
+                
+                # Predict
+                logits = model(tensor)
+                prob = torch.sigmoid(logits).squeeze().cpu().numpy()
+                
+                # Cộng dồn kết quả
+                prob_map[y:y+window_size, x:x+window_size] += prob
+                count_map[y:y+window_size, x:x+window_size] += 1.0
+
+    # 4. Tính trung bình (Average Blending)
+    final_prob = prob_map / np.maximum(count_map, 1.0)
+    
+    # Cắt bỏ phần padding thừa
+    final_prob = final_prob[:h_orig, :w_orig]
+    
+    return final_prob

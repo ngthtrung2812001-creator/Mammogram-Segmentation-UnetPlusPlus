@@ -8,6 +8,7 @@ from tqdm import tqdm
 import os
 import time
 import gc
+import cv2
 
 # Chỉ import các hàm cần thiết từ utils
 from utils import dice_coeff_hard, iou_core_hard, visualize_prediction
@@ -48,10 +49,105 @@ class Trainer:
 
         # AMP (Automatic Mixed Precision)
         self.use_amp = torch.cuda.is_available()
-        self.scaler = GradScaler(enabled=self.use_amp)
+        # Sửa lỗi deprecation warning của PyTorch mới
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         
         # Scheduler (Có thể đưa ra ngoài main nếu muốn tùy chỉnh cao hơn)
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+    
+    def evaluate_full_images(self, test_dataset, checkpoint_path=None, save_visuals=True, output_dir="test_full_results"):
+        """
+        Đánh giá trên ảnh gốc kích thước lớn bằng Sliding Window.
+        """
+        if checkpoint_path:
+            self.load_checkpoint(checkpoint_path)
+        
+        self.model.eval()
+        os.makedirs(output_dir, exist_ok=True)
+        
+        dice_scores = []
+        iou_scores = []
+        
+        print(f"[INFO] Bắt đầu đánh giá Sliding Window trên {len(test_dataset)} ảnh gốc...")
+        
+        # Vì ảnh gốc kích thước khác nhau, ta không dùng DataLoader batch mà loop thủ công
+        for i in range(len(test_dataset)):
+            # Lấy dữ liệu từ Dataset
+            full_img, gt_mask, img_path = test_dataset[i]
+            filename = os.path.basename(img_path)
+            
+            # --- 1. CHẠY SLIDING WINDOW ---
+            # Hàm này nằm trong utils.py mà ta vừa thêm
+            from utils import predict_sliding_window
+            pred_prob = predict_sliding_window(self.model, full_img, self.device, window_size=512, stride=256)
+            
+            # Threshold để ra mask nhị phân (0 hoặc 1)
+            pred_mask = (pred_prob > 0.5).astype(np.float32)
+            
+            # --- 2. TÍNH ĐIỂM SỐ (NẾU CÓ MASK GỐC) ---
+            dice, iou = 0.0, 0.0
+            if gt_mask is not None:
+                # Resize GT mask về đúng kích thước ảnh gốc (đề phòng sai lệch 1-2 pixel)
+                if gt_mask.shape != pred_mask.shape:
+                    gt_mask = cv2.resize(gt_mask, (pred_mask.shape[1], pred_mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+                
+                # Tính Dice
+                intersection = np.sum(pred_mask * gt_mask)
+                union = np.sum(pred_mask) + np.sum(gt_mask)
+                dice = (2. * intersection + 1e-6) / (union + 1e-6)
+                
+                # Tính IoU
+                union_iou = np.sum(pred_mask) + np.sum(gt_mask) - intersection
+                iou = (intersection + 1e-6) / (union_iou + 1e-6)
+                
+                dice_scores.append(dice)
+                iou_scores.append(iou)
+                
+                print(f"   Using Sliding Window -> {filename} | Dice: {dice:.4f} | IoU: {iou:.4f}")
+            else:
+                print(f"   Using Sliding Window -> {filename} | (No GT Mask)")
+
+            # --- 3. LƯU ẢNH KẾT QUẢ ---
+            if save_visuals:
+                # Vẽ so sánh: Ảnh Gốc | Mask Gốc | Mask Dự Đoán | Chồng lớp
+                import matplotlib.pyplot as plt
+                
+                fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+                ax[0].imshow(full_img, cmap='gray')
+                ax[0].set_title("Original Mammogram")
+                ax[0].axis('off')
+                
+                if gt_mask is not None:
+                    ax[1].imshow(gt_mask, cmap='gray')
+                    ax[1].set_title("Ground Truth")
+                else:
+                    ax[1].text(0.5, 0.5, "No Mask", ha='center')
+                ax[1].axis('off')
+                
+                # Vẽ chồng lớp (Overlay)
+                ax[2].imshow(full_img, cmap='gray')
+                # Mask thật màu xanh lá
+                if gt_mask is not None:
+                    ax[2].imshow(np.ma.masked_where(gt_mask == 0, gt_mask), cmap='Greens', alpha=0.3, vmin=0, vmax=1)
+                # Dự đoán màu đỏ
+                ax[2].imshow(np.ma.masked_where(pred_mask == 0, pred_mask), cmap='Reds', alpha=0.5, vmin=0, vmax=1)
+                ax[2].set_title(f"Prediction (Dice: {dice:.2f})")
+                ax[2].axis('off')
+                
+                save_path = os.path.join(output_dir, f"FULL_EVAL_{filename}")
+                plt.tight_layout()
+                plt.savefig(save_path)
+                plt.close()
+
+        # Tổng kết
+        if dice_scores:
+            avg_dice = np.mean(dice_scores)
+            avg_iou = np.mean(iou_scores)
+            print(f"\n{'='*40}")
+            print(f"🚀 KẾT QUẢ TRÊN ẢNH GỐC (FULL IMAGE)")
+            print(f"Avg Dice: {avg_dice:.4f}")
+            print(f"Avg IoU:  {avg_iou:.4f}")
+            print(f"{'='*40}\n")
 
     def save_checkpoint(self, epoch, filename):
         checkpoint = {
@@ -347,3 +443,4 @@ class Trainer:
         print(f"{'='*40}\n")
         
         return avg_dice_mass, avg_dice_norm
+    
