@@ -107,10 +107,10 @@ def get_dataloaders(data_dir, batch_size, img_size, augment=False):
                 A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=1),
                 A.RandomGamma(gamma_limit=(80, 120), p=1),
             ], p=0.3),
-            A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 50.0), p=1),
-                A.GaussianBlur(blur_limit=3, p=1),
-            ], p=0.2),
+            # A.OneOf([
+            #     A.GaussNoise(var_limit=(10.0, 50.0), p=1),
+            #     A.GaussianBlur(blur_limit=3, p=1),
+            # ], p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ]
@@ -157,7 +157,7 @@ def get_dataloaders(data_dir, batch_size, img_size, augment=False):
     g.manual_seed(SEED)
 
     trainLoader = DataLoader(trainDS, shuffle=True, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
-    validLoader = DataLoader(validDS, shuffle=False, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
+    validLoader = DataLoader(validDS, shuffle=False, batch_size=batch_size*2, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
     testLoader = DataLoader(testDS, shuffle=False, batch_size=batch_size, pin_memory=PIN_MEMORY, num_workers=4, worker_init_fn=seed_worker, generator=g)
     
     return trainLoader, validLoader, testLoader

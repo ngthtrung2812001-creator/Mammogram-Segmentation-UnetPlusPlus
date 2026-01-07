@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import numpy as np
 from tqdm import tqdm
 import os
@@ -16,7 +16,7 @@ from utils import dice_coeff_hard, iou_core_hard, visualize_prediction
 class Trainer:
     def __init__(self, model, optimizer, criterion, num_epochs=50, patience=20, device=None):
         """
-        Trainer độc lập, không phụ thuộc vào file config toàn cục.
+        Trainer độc lập, tích hợp ReduceLROnPlateau để tối ưu Learning Rate.
         """
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
@@ -52,8 +52,15 @@ class Trainer:
         # Sửa lỗi deprecation warning của PyTorch mới
         self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         
-        # Scheduler (Có thể đưa ra ngoài main nếu muốn tùy chỉnh cao hơn)
-        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+        # --- SCHEDULER MỚI: ReduceLROnPlateau ---
+        # Tự động giảm Learning Rate khi Loss bị chững lại (Plateau)
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',        # Mục tiêu: Giảm thiểu Loss
+            factor=0.5,        # Giảm đi 50% mỗi lần (lr = lr * 0.5)
+            patience=3,        # Chờ 3 epoch không cải thiện rồi mới giảm
+            min_lr=1e-7,       # Giới hạn dưới của LR
+        )
     
     def evaluate_full_images(self, test_dataset, checkpoint_path=None, save_visuals=True, output_dir="test_full_results"):
         """
@@ -70,33 +77,27 @@ class Trainer:
         
         print(f"[INFO] Bắt đầu đánh giá Sliding Window trên {len(test_dataset)} ảnh gốc...")
         
-        # Vì ảnh gốc kích thước khác nhau, ta không dùng DataLoader batch mà loop thủ công
         for i in range(len(test_dataset)):
-            # Lấy dữ liệu từ Dataset
             full_img, gt_mask, img_path = test_dataset[i]
             filename = os.path.basename(img_path)
             
             # --- 1. CHẠY SLIDING WINDOW ---
-            # Hàm này nằm trong utils.py mà ta vừa thêm
             from utils import predict_sliding_window
             pred_prob = predict_sliding_window(self.model, full_img, self.device, window_size=512, stride=256)
             
-            # Threshold để ra mask nhị phân (0 hoặc 1)
+            # Threshold
             pred_mask = (pred_prob > 0.5).astype(np.float32)
             
-            # --- 2. TÍNH ĐIỂM SỐ (NẾU CÓ MASK GỐC) ---
+            # --- 2. TÍNH ĐIỂM SỐ ---
             dice, iou = 0.0, 0.0
             if gt_mask is not None:
-                # Resize GT mask về đúng kích thước ảnh gốc (đề phòng sai lệch 1-2 pixel)
                 if gt_mask.shape != pred_mask.shape:
                     gt_mask = cv2.resize(gt_mask, (pred_mask.shape[1], pred_mask.shape[0]), interpolation=cv2.INTER_NEAREST)
                 
-                # Tính Dice
                 intersection = np.sum(pred_mask * gt_mask)
                 union = np.sum(pred_mask) + np.sum(gt_mask)
                 dice = (2. * intersection + 1e-6) / (union + 1e-6)
                 
-                # Tính IoU
                 union_iou = np.sum(pred_mask) + np.sum(gt_mask) - intersection
                 iou = (intersection + 1e-6) / (union_iou + 1e-6)
                 
@@ -107,39 +108,28 @@ class Trainer:
             else:
                 print(f"   Using Sliding Window -> {filename} | (No GT Mask)")
 
-            # --- 3. LƯU ẢNH KẾT QUẢ ---
+            # --- 3. LƯU ẢNH ---
             if save_visuals:
-                # Vẽ so sánh: Ảnh Gốc | Mask Gốc | Mask Dự Đoán | Chồng lớp
                 import matplotlib.pyplot as plt
-                
                 fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-                ax[0].imshow(full_img, cmap='gray')
-                ax[0].set_title("Original Mammogram")
-                ax[0].axis('off')
+                ax[0].imshow(full_img, cmap='gray'); ax[0].set_title("Original"); ax[0].axis('off')
                 
                 if gt_mask is not None:
-                    ax[1].imshow(gt_mask, cmap='gray')
-                    ax[1].set_title("Ground Truth")
+                    ax[1].imshow(gt_mask, cmap='gray'); ax[1].set_title("Ground Truth")
                 else:
                     ax[1].text(0.5, 0.5, "No Mask", ha='center')
                 ax[1].axis('off')
                 
-                # Vẽ chồng lớp (Overlay)
                 ax[2].imshow(full_img, cmap='gray')
-                # Mask thật màu xanh lá
                 if gt_mask is not None:
                     ax[2].imshow(np.ma.masked_where(gt_mask == 0, gt_mask), cmap='Greens', alpha=0.3, vmin=0, vmax=1)
-                # Dự đoán màu đỏ
                 ax[2].imshow(np.ma.masked_where(pred_mask == 0, pred_mask), cmap='Reds', alpha=0.5, vmin=0, vmax=1)
                 ax[2].set_title(f"Prediction (Dice: {dice:.2f})")
                 ax[2].axis('off')
                 
                 save_path = os.path.join(output_dir, f"FULL_EVAL_{filename}")
-                plt.tight_layout()
-                plt.savefig(save_path)
-                plt.close()
+                plt.tight_layout(); plt.savefig(save_path); plt.close()
 
-        # Tổng kết
         if dice_scores:
             avg_dice = np.mean(dice_scores)
             avg_iou = np.mean(iou_scores)
@@ -170,7 +160,6 @@ class Trainer:
         print(f"[INFO] Loading checkpoint: {path}")
         try:
             checkpoint = torch.load(path, map_location=self.device)
-            
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             
@@ -186,10 +175,6 @@ class Trainer:
             self.best_iou_mass = checkpoint.get('best_iou_mass', 0.0)
             self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
             
-            self.best_epoch_dice = checkpoint.get('best_epoch_dice', 0)
-            self.best_epoch_iou = checkpoint.get('best_epoch_iou', 0)
-            self.best_epoch_loss = checkpoint.get('best_epoch_loss', 0)
-            
             print(f"[INFO] Loaded checkpoint from epoch {self.start_epoch}")
         except Exception as e:
             print(f"[ERROR] Could not load checkpoint: {e}")
@@ -198,11 +183,8 @@ class Trainer:
         self.model.train() if is_train else self.model.eval()
         
         epoch_loss = 0.0
-        
-        # Accumulators
         total_dice_mass, total_iou_mass = 0.0, 0.0
         count_mass = 0
-        
         total_dice_norm, total_iou_norm = 0.0, 0.0
         count_norm = 0
         
@@ -219,19 +201,15 @@ class Trainer:
                 outputs = self.model(images)
                 loss = self.criterion(outputs, masks)
                 
-                # Tính Metrics (No Grad)
                 with torch.no_grad():
-                    batch_dice = dice_coeff_hard(outputs, masks) # Tensor [B]
-                    batch_iou = iou_core_hard(outputs, masks)    # Tensor [B]
+                    batch_dice = dice_coeff_hard(outputs, masks)
+                    batch_iou = iou_core_hard(outputs, masks)
                     
-                    # Phân loại Mass / Normal
                     masks_flat = masks.view(masks.size(0), -1)
                     mask_sums = masks_flat.sum(dim=1)
-                    
                     is_mass = (mask_sums > 0)
                     is_norm = (mask_sums == 0)
                     
-                    # Cộng dồn
                     if is_mass.any():
                         total_dice_mass += batch_dice[is_mass].sum().item()
                         total_iou_mass  += batch_iou[is_mass].sum().item()
@@ -248,13 +226,10 @@ class Trainer:
                 clip_grad_norm_(self.model.parameters(), 1.0)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
-                
-                # Update scheduler per step (cho CosineAnnealingWarmRestarts)
-                self.scheduler.step(self.start_epoch + i / len(loader)) 
+                # LƯU Ý: ĐÃ XÓA scheduler.step() Ở ĐÂY VÌ ReduceLROnPlateau GỌI THEO EPOCH
 
             epoch_loss += loss.item()
             
-            # Progress bar update
             curr_d_mass = total_dice_mass / count_mass if count_mass > 0 else 0.0
             curr_d_norm = total_dice_norm / count_norm if count_norm > 0 else 0.0
             
@@ -265,7 +240,6 @@ class Trainer:
                     'D_Norm': f"{curr_d_norm:.3f}"
                 })
         
-        # Tổng kết epoch
         avg_loss = epoch_loss / len(loader)
         final_dice_mass = total_dice_mass / count_mass if count_mass > 0 else 0.0
         final_iou_mass  = total_iou_mass / count_mass if count_mass > 0 else 0.0
@@ -300,8 +274,14 @@ class Trainer:
             with torch.no_grad():
                 val_res = self.run_epoch(val_loader, is_train=False)
 
-            # 3. Logging & History
-            current_lr = self.scheduler.get_last_lr()[0]
+            # 3. SCHEDULER STEP (UPDATE SAU MỖI EPOCH)
+            # ReduceLROnPlateau cần tham số val_loss để quyết định
+            self.scheduler.step(val_res['loss'])
+
+            # 4. Logging
+            # Lấy learning rate hiện tại để in ra log
+            current_lr = self.optimizer.param_groups[0]['lr']
+            
             print(f"\n[Epoch {epoch+1}/{self.num_epochs}] LR: {current_lr:.2e}")
             print(f"   Train Loss: {train_res['loss']:.4f} | Mass Dice: {train_res['dice_mass']:.3f} | Norm Dice: {train_res['dice_norm']:.3f}")
             print(f"   Val Loss:   {val_res['loss']:.4f} | Mass Dice: {val_res['dice_mass']:.3f} | Norm Dice: {val_res['dice_norm']:.3f}")
@@ -313,25 +293,22 @@ class Trainer:
             self.history['train_iou_mass'].append(train_res['iou_mass'])
             self.history['val_iou_mass'].append(val_res['iou_mass'])
             
-            # 4. Checkpointing
-            # Luôn lưu bản mới nhất
+            # 5. Checkpointing
             self.save_checkpoint(epoch + 1, 'last_model.pth')
             
-            # Lưu Best Dice
             if val_res['dice_mass'] > self.best_dice_mass:
                 self.best_dice_mass = val_res['dice_mass']
                 self.best_epoch_dice = epoch + 1
                 self.save_checkpoint(epoch + 1, 'best_dice_mass_model.pth')
                 print(f"   🔥 New Best Dice Mass: {self.best_dice_mass:.4f}")
 
-            # Lưu Best IoU
             if val_res['iou_mass'] > self.best_iou_mass:
                 self.best_iou_mass = val_res['iou_mass']
                 self.best_epoch_iou = epoch + 1
                 self.save_checkpoint(epoch + 1, 'best_iou_mass_model.pth')
                 print(f"   🔥 New Best IoU Mass: {self.best_iou_mass:.4f}")
 
-            # 5. Early Stopping (dựa trên Loss)
+            # 6. Early Stopping
             if val_res['loss'] < self.best_val_loss:
                 self.best_val_loss = val_res['loss']
                 self.best_epoch_loss = epoch + 1
@@ -344,7 +321,6 @@ class Trainer:
                 print(f"\n[STOP] Early stopping triggered at epoch {epoch + 1}")
                 break
             
-            # Cleanup RAM/VRAM
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -352,17 +328,11 @@ class Trainer:
         print(f"\n✅ Training Finished in {total_time // 60:.0f}m {total_time % 60:.0f}s")
 
     def evaluate(self, test_loader, checkpoint_path=None, save_visuals=False, output_dir="test_results"):
-        """
-        Đánh giá model trên tập test và tùy chọn lưu ảnh kết quả.
-        """
         if checkpoint_path:
             self.load_checkpoint(checkpoint_path)
         
         self.model.eval()
-        
-        # Reset lists để export CSV sau này
         self.dice_list, self.iou_list, self.path_list, self.type_list = [], [], [], []
-        
         total_dice_mass, count_mass = 0.0, 0
         total_dice_norm, count_norm = 0.0, 0
         
@@ -375,39 +345,23 @@ class Trainer:
             
             for i, (images, masks, image_paths) in test_bar:
                 images, masks = images.to(self.device), masks.to(self.device)
-                
-                # Inference
                 logits = self.model(images)
                 
-                # Tính metrics cứng (cho báo cáo)
                 batch_dices = dice_coeff_hard(logits, masks)
                 batch_ious = iou_core_hard(logits, masks)
                 
-                # Chuẩn bị dữ liệu vẽ (nếu cần)
-                if save_visuals:
-                    probs = torch.sigmoid(logits)
-                    #preds = (probs > 0.5).float() # Thresholding 
-                    # Lưu ý: visualize_prediction trong utils mới đã tự xử lý sigmoid, nên ta truyền logits hoặc probs đều được,
-                    # nhưng truyền probs/logits thì hàm visualize sẽ linh hoạt hơn. 
-                    # Ở đây tôi truyền raw logits để utils tự xử lý (như logic utils mới tôi gửi).
-                
-                # Lặp từng ảnh trong batch
                 for j in range(images.size(0)):
                     d = batch_dices[j].item()
                     ious = batch_ious[j].item()
                     path = image_paths[j]
-                    
-                    # Phân loại
                     is_normal = (masks[j].sum() == 0)
                     current_type = "Normal" if is_normal else "Mass"
                     
-                    # Lưu thông tin
                     self.dice_list.append(d)
                     self.iou_list.append(ious)
                     self.path_list.append(path)
                     self.type_list.append(current_type)
                     
-                    # Cộng dồn
                     if is_normal:
                         total_dice_norm += d
                         count_norm += 1
@@ -415,7 +369,6 @@ class Trainer:
                         total_dice_mass += d
                         count_mass += 1
                         
-                    # Vẽ và lưu ảnh (Chỉ lưu Mass hoặc lưu cả 2 tùy bạn, code này lưu hết)
                     if save_visuals:
                         file_name = os.path.basename(path)
                         prefix = "NORM" if is_normal else "MASS"
@@ -425,13 +378,12 @@ class Trainer:
                         visualize_prediction(
                             img_tensor=images[j],
                             mask_tensor=masks[j],
-                            pred_tensor=logits[j], # Truyền logits để utils tự sigmoid
+                            pred_tensor=logits[j],
                             save_path=save_full_path,
                             iou_score=ious,
                             dice_score=d
                         )
 
-        # Tổng hợp kết quả
         avg_dice_mass = total_dice_mass / count_mass if count_mass > 0 else 0.0
         avg_dice_norm = total_dice_norm / count_norm if count_norm > 0 else 0.0
         
@@ -443,4 +395,3 @@ class Trainer:
         print(f"{'='*40}\n")
         
         return avg_dice_mass, avg_dice_norm
-    

@@ -35,7 +35,7 @@ python train.py \
   --lr0 1e-4 \
   --loss BCEDice_loss \
   --optimizer AdamW \
-  --backbone "efficientnet-b5" \
+  --backbone "tu-resnest50d" \
   --augment
 
 echo "✅ [DONE] Training started. Output: output/$RUN_NAME"
@@ -53,7 +53,7 @@ python train.py \
   --data "$DATA_PATH1" \
   --saveas "$RUN_NAME" \
   --checkpoint "$CHECKPOINT" \
-  --backbone "efficientnet-b5" \
+  --backbone "tu-resnest50d" \
   --full_eval \
   --batchsize 1
 

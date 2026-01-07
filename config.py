@@ -9,7 +9,8 @@ PIN_MEMORY = True if torch.cuda.is_available() else False
 # Các giá trị mặc định (Fallback)
 INIT_LR = 1e-4
 BATCH_SIZE = 8
-WEIGHT_DECAY = 1e-4
+# WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 0.05
 INPUT_IMAGE_WIDTH = 512
 INPUT_IMAGE_HEIGHT = 512
 NUM_CLASSES = 1

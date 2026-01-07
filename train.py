@@ -61,7 +61,7 @@ def main(args):
         encoder_weights="imagenet",     
         in_channels=3,
         classes=1,          
-        decoder_attention_type="scse"
+        decoder_attention_type="scse",
     )
 
     # 2. OPTIMIZER & LOSS
@@ -74,7 +74,7 @@ def main(args):
         optimizer=optimizer,
         criterion=criterion,
         num_epochs=args.epoch,
-        patience=15
+        patience=20
     )
 
     # 4. EXECUTION
